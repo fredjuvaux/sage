@@ -1,4 +1,5 @@
 ### HEAD
+* Add support for theme customizer ([#1573](https://github.com/roots/sage/pull/1573))
 * Remove extraneous no-js ([#1562](https://github.com/roots/sage/pull/1562))
 * Simplify/speed up editor style process ([#1560](https://github.com/roots/sage/pull/1560))
 
