@@ -1,7 +1,6 @@
 // ## Globals
 var argv         = require('minimist')(process.argv.slice(2));
 var autoprefixer = require('gulp-autoprefixer');
-var browserSync  = require('browser-sync').create();
 var changed      = require('gulp-changed');
 var concat       = require('gulp-concat');
 var flatten      = require('gulp-flatten');
@@ -14,7 +13,6 @@ var less         = require('gulp-less');
 var merge        = require('merge-stream');
 var minifyCss    = require('gulp-minify-css');
 var plumber      = require('gulp-plumber');
-var rev          = require('gulp-rev');
 var runSequence  = require('run-sequence');
 var sass         = require('gulp-sass');
 var sourcemaps   = require('gulp-sourcemaps');
@@ -52,8 +50,6 @@ var project = manifest.getProjectGlobs();
 
 // CLI options
 var enabled = {
-  // Enable static asset revisioning when `--production`
-  rev: argv.production,
   // Disable source maps when `--production`
   maps: !argv.production,
   // Fail styles task on error when `--production`
@@ -61,11 +57,12 @@ var enabled = {
   // Fail due to JSHint warnings only when `--production`
   failJSHint: argv.production,
   // Strip debug statments from javascript when `--production`
-  stripJSDebug: argv.production
+  stripJSDebug: argv.production,
+  // uglify JS when `--production`
+  uglifyJs: argv.production,
+  // minify CSS when `--production`
+  minifyCss: argv.production
 };
-
-// Path to the compiled assets manifest in the dist directory
-var revManifest = path.dist + 'assets.json';
 
 // ## Reusable Pipelines
 // See https://github.com/OverZealous/lazypipe
@@ -92,7 +89,9 @@ var cssTasks = function(filename) {
       return gulpif('*.scss', sass({
         outputStyle: 'nested', // libsass doesn't support expanded yet
         precision: 10,
-        includePaths: ['.'],
+        includePaths: [
+          './node_modules/compass-mixins/lib'
+        ],
         errLogToConsole: !enabled.failStyleTask
       }));
     })
@@ -107,12 +106,11 @@ var cssTasks = function(filename) {
         'opera 12'
       ]
     })
-    .pipe(minifyCss, {
-      advanced: false,
-      rebase: false
-    })
     .pipe(function() {
-      return gulpif(enabled.rev, rev());
+      return gulpif(enabled.minifyCss, minifyCss({
+        advanced: false,
+        rebase: false
+      }));
     })
     .pipe(function() {
       return gulpif(enabled.maps, sourcemaps.write('.', {
@@ -134,33 +132,18 @@ var jsTasks = function(filename) {
       return gulpif(enabled.maps, sourcemaps.init());
     })
     .pipe(concat, filename)
-    .pipe(uglify, {
-      compress: {
-        'drop_debugger': enabled.stripJSDebug
-      }
-    })
     .pipe(function() {
-      return gulpif(enabled.rev, rev());
+      return gulpif(enabled.uglifyJs, uglify({
+        compress: {
+          'drop_debugger': enabled.stripJSDebug
+        }
+      }));
     })
     .pipe(function() {
       return gulpif(enabled.maps, sourcemaps.write('.', {
         sourceRoot: 'assets/scripts/'
       }));
     })();
-};
-
-// ### Write to rev manifest
-// If there are any revved files then write them to the rev manifest.
-// See https://github.com/sindresorhus/gulp-rev
-var writeToManifest = function(directory) {
-  return lazypipe()
-    .pipe(gulp.dest, path.dist + directory)
-    .pipe(browserSync.stream, {match: '**/*.{js,css}'})
-    .pipe(rev.manifest, revManifest, {
-      base: path.dist,
-      merge: true
-    })
-    .pipe(gulp.dest, path.dist)();
 };
 
 // ## Gulp tasks
@@ -184,7 +167,7 @@ gulp.task('styles', ['wiredep'], function() {
       .pipe(cssTasksInstance));
   });
   return merged
-    .pipe(writeToManifest('styles'));
+    .pipe(lazypipe().pipe(gulp.dest, path.dist + 'styles')());
 });
 
 // ### Scripts
@@ -199,7 +182,7 @@ gulp.task('scripts', ['jshint'], function() {
     );
   });
   return merged
-    .pipe(writeToManifest('scripts'));
+    .pipe(lazypipe().pipe(gulp.dest, path.dist + 'scripts')());
 });
 
 // ### Fonts
@@ -208,8 +191,7 @@ gulp.task('scripts', ['jshint'], function() {
 gulp.task('fonts', function() {
   return gulp.src(globs.fonts)
     .pipe(flatten())
-    .pipe(gulp.dest(path.dist + 'fonts'))
-    .pipe(browserSync.stream());
+    .pipe(gulp.dest(path.dist + 'fonts'));
 });
 
 // ### Images
@@ -221,8 +203,7 @@ gulp.task('images', function() {
       interlaced: true,
       svgoPlugins: [{removeUnknownsAndDefaults: false}, {cleanupIDs: false}]
     }))
-    .pipe(gulp.dest(path.dist + 'images'))
-    .pipe(browserSync.stream());
+    .pipe(gulp.dest(path.dist + 'images'));
 });
 
 // ### JSHint
@@ -241,20 +222,7 @@ gulp.task('jshint', function() {
 gulp.task('clean', require('del').bind(null, [path.dist]));
 
 // ### Watch
-// `gulp watch` - Use BrowserSync to proxy your dev server and synchronize code
-// changes across devices. Specify the hostname of your dev server at
-// `manifest.config.devUrl`. When a modification is made to an asset, run the
-// build step for that asset and inject the changes into the page.
-// See: http://www.browsersync.io
 gulp.task('watch', function() {
-  browserSync.init({
-    files: ['{lib,templates}/**/*.php', '*.php'],
-    proxy: config.devUrl,
-    snippetOptions: {
-      whitelist: ['/wp-admin/admin-ajax.php'],
-      blacklist: ['/wp-admin/**']
-    }
-  });
   gulp.watch([path.source + 'styles/**/*'], ['styles']);
   gulp.watch([path.source + 'scripts/**/*'], ['jshint', 'scripts']);
   gulp.watch([path.source + 'fonts/**/*'], ['fonts']);
